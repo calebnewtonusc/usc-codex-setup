@@ -90,11 +90,24 @@ if [ "$DO_PREREQS" = 1 ]; then
   nodearch=x64 gharch=amd64 rgtriple=x86_64-unknown-linux-musl jqarch=amd64 nodeos=linux ghos=linux jqos=linux
   case "$ARCH" in aarch64|arm64) nodearch=arm64 gharch=arm64 rgtriple=aarch64-unknown-linux-gnu jqarch=arm64 ;; esac
   [ "$OS" = Darwin ] && { nodeos=darwin ghos=macOS jqos=macos; rgtriple="${ARCH/arm64/aarch64}-apple-darwin"; }
+  # On a Mac with Homebrew, every tool comes from Homebrew, which checks each download's
+  # checksum. The raw downloads below are only the fallback for Linux or a Mac without it.
+  if [ "$OS" = Darwin ] && command -v brew >/dev/null 2>&1; then
+    for pair in node:node codex:codex gh:gh jq:jq rg:ripgrep uv:uv; do
+      cmd="${pair%%:*}" pkg="${pair#*:}"
+      if command -v "$cmd" >/dev/null 2>&1; then have "$pkg"
+      else run brew install --quiet "$pkg" >/dev/null 2>&1 && ok "$pkg" || warn "$pkg install failed (brew install $pkg)"; fi
+    done
+  fi
   t="$(mktemp -d)"
   if command -v node >/dev/null 2>&1 && [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 20 ] 2>/dev/null; then have "node $(node --version)"
   elif [ "$DRY_RUN" = 1 ]; then run "install node 22 into ~/.local/node"; else
     f="$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | awk '{print $2}' | grep -E "^node-v[0-9.]+-$nodeos-$nodearch\.tar\.gz$" | head -1)"
-    if [ -n "$f" ] && curl -fsSL "https://nodejs.org/dist/latest-v22.x/$f" | tar xz -C "$t"; then
+    want="$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt | awk -v f="$f" '$2==f{print $1}')"
+    if [ -n "$f" ] && curl -fsSL -o "$t/node.tgz" "https://nodejs.org/dist/latest-v22.x/$f" \
+      && [ -n "$want" ] \
+      && [ "$( (shasum -a 256 "$t/node.tgz" 2>/dev/null || sha256sum "$t/node.tgz") | awk '{print $1}')" = "$want" ] \
+      && tar xzf "$t/node.tgz" -C "$t"; then
       rm -rf "$HOME/.local/node" && mv "$t/${f%.tar.gz}" "$HOME/.local/node" \
         && for b in node npm npx; do ln -sf "$HOME/.local/node/bin/$b" "$LOCAL_BIN/$b"; done && ok "node 22" || warn "node install failed"
     else warn "node download failed"; fi
