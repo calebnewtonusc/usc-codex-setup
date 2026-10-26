@@ -24,10 +24,10 @@ that came with this repo.
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 brew install node gh
-npm install -g @openai/codex
 gh auth login
-codex login
 ```
+
+And download the ChatGPT app for Mac (https://learn.chatgpt.com/docs/app), signed in with your USC account. That's where you use Codex. Terminal is only for setup.
 
 ## Install
 
@@ -35,14 +35,8 @@ codex login
 gh repo clone calebnewtonusc/usc-codex-setup ~/usc-codex-setup && ~/usc-codex-setup/install.sh
 ```
 
-Then open a new Terminal window and run:
-
-```bash
-cd ~/life && codex
-```
-
-Say "set me up". It interviews you one question at a time and fills in your files.
-After that, open it the same way and ask "what should I do today."
+Then quit and reopen the ChatGPT app, go to Codex, and open the `life` folder in your home folder. Say "set me up". It interviews you one question at a time and fills in your files.
+After that, open that folder and ask "what should I do today."
 
 Running the installer twice adds nothing the second time, and it never overwrites a
 file you already have. `./install.sh --dry-run` shows what it would do first.

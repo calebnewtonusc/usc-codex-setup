@@ -1,6 +1,6 @@
 # Prompt: finish my setup from this repo
 
-If the installer stopped partway, open Terminal, run `codex`, and paste everything
+If the installer stopped partway, open Codex in the ChatGPT app and paste everything
 below the line.
 
 ---
@@ -17,5 +17,5 @@ hands (a browser sign-in, my Mac password).
 5. Check that `~/life` has AGENTS.md, ME.md, NOW.md, PEOPLE.md and LOOPS.md.
 6. Tell me in plain words what's set up, and anything that still failed.
 
-At the end, tell me to quit and reopen Terminal, then run `cd ~/life && codex` and
-say "set me up". Never put a password or token in a file.
+At the end, tell me to quit and reopen the ChatGPT app, open the life folder in
+Codex, and say "set me up". Never put a password or token in a file.

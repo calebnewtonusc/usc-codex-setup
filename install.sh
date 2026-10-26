@@ -295,5 +295,5 @@ echo "  installed: ${#INSTALLED[@]}   already had: ${#SKIPPED[@]}   problems: ${
 if [ ${#PROBLEMS[@]} -gt 0 ]; then bold "Problems"; for p in "${PROBLEMS[@]}"; do echo "  - $p"; done; fi
 if [ ${#NEEDS[@]} -gt 0 ]; then bold "Still needs you"; for n in "${NEEDS[@]}"; do echo "  - $n"; done; fi
 echo
-echo "Open a new Terminal window, then type:  cd ~/life && codex"
+echo "Quit and reopen the ChatGPT app, go to Codex, open the life folder in your home folder,"
 echo "and say: set me up"
