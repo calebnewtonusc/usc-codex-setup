@@ -53,6 +53,12 @@ file you already have. `./install.sh --dry-run` shows what it would do first.
   (no-ai-slop, avoid-ai-writing, humanizer). For when you start building things:
   debugging, reviewing-changes, shipping, interface, repo-health, stack-rules,
   plus pdf, docx and xlsx from Anthropic's skills repo.
+- **Kits** Codex clones when you need one: [apply-kit](https://github.com/calebnewtonusc/apply-kit)
+  for any application (clubs, jobs, fellowships), [accommodations-kit](https://github.com/calebnewtonusc/accommodations-kit)
+  for disability accommodations, [claude-design-kit](https://github.com/calebnewtonusc/claude-design-kit)
+  for making things look designed.
+- More skills: diagram (clean diagrams of anything), first-reader (reads a draft
+  the way its reader will), thinking-out-loud, and pptx for slides.
 - **Checks**: `slop-check <file> --issues` scores a draft for AI-sounding writing.
   `ai-scan`, `code-slop` and `agent-check` do the same for words and code.
 - **Tools Codex can use**: a headless browser (playwright, chrome-devtools), web
@@ -76,6 +82,8 @@ the second run adds nothing.
 
 - [petergyang/no-ai-slop](https://github.com/petergyang/no-ai-slop), [conorbronsdon/avoid-ai-writing](https://github.com/conorbronsdon/avoid-ai-writing), [blader/humanizer](https://github.com/blader/humanizer)
 - [31Carlton7/skills](https://github.com/31Carlton7/skills): deslop
+- [cathrynlavery/diagram-design](https://github.com/cathrynlavery/diagram-design): diagram
+- [Shubhamsaboo/awesome-llm-apps](https://github.com/Shubhamsaboo/awesome-llm-apps): first-reader, thinking-out-loud
 - [anthropics/skills](https://github.com/anthropics/skills): document and dev skills
 - The rest: ported from Caleb Newton's own kit
 

@@ -189,7 +189,7 @@ link_skill() {
   run ln -s "$src" "$dst" && ok "skill $name"
 }
 
-ANTHROPIC_SKILLS=(pdf docx xlsx webapp-testing mcp-builder skill-creator)
+ANTHROPIC_SKILLS=(pdf docx xlsx pptx webapp-testing mcp-builder skill-creator)
 
 if [ "$DO_SKILLS" = 1 ]; then
   bold "2. Skills"
@@ -202,6 +202,12 @@ if [ "$DO_SKILLS" = 1 ]; then
   fetch_repo avoid-ai-writing conorbronsdon/avoid-ai-writing 209815cdeb4af942616daec89a5e0a706c804e3a && link_skill "$VENDOR/avoid-ai-writing" avoid-ai-writing
   fetch_repo carlton-skills 31Carlton7/skills && link_skill "$VENDOR/carlton-skills/deslop" deslop
   fetch_repo humanizer blader/humanizer && link_skill "$VENDOR/humanizer" humanizer
+  # first-reader reads a draft as its audience will; thinking-out-loud talks a decision through.
+  # diagram: pinned, it ships scripts that run.
+  fetch_repo diagram-design cathrynlavery/diagram-design f903933a534ba92cde1c85a28186267b3a317bb2 \
+    && link_skill "$VENDOR/diagram-design/skills/diagram-design" diagram
+  fetch_repo awesome-llm-apps Shubhamsaboo/awesome-llm-apps \
+    && for s in first-reader thinking-out-loud; do link_skill "$VENDOR/awesome-llm-apps/agent_skills/$s" "$s"; done
   fetch_repo anthropic-skills anthropics/skills \
     && for s in "${ANTHROPIC_SKILLS[@]}"; do link_skill "$VENDOR/anthropic-skills/skills/$s" "$s"; done
 fi
