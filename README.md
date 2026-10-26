@@ -18,7 +18,8 @@ that came with this repo.
 
 ```bash
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install codex gh
+brew install node gh
+npm install -g @openai/codex
 gh auth login
 codex login
 ```

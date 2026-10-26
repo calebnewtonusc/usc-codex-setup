@@ -93,7 +93,9 @@ if [ "$DO_PREREQS" = 1 ]; then
   # On a Mac with Homebrew, every tool comes from Homebrew, which checks each download's
   # checksum. The raw downloads below are only the fallback for Linux or a Mac without it.
   if [ "$OS" = Darwin ] && command -v brew >/dev/null 2>&1; then
-    for pair in node:node codex:codex gh:gh jq:jq rg:ripgrep uv:uv; do
+    # codex comes from npm below, not the Homebrew cask: the cask's binary is quarantined
+    # and macOS blocks it with "Apple could not verify codex" (seen 2026-10-26).
+    for pair in node:node gh:gh jq:jq rg:ripgrep uv:uv; do
       cmd="${pair%%:*}" pkg="${pair#*:}"
       if command -v "$cmd" >/dev/null 2>&1; then have "$pkg"
       else run brew install --quiet "$pkg" >/dev/null 2>&1 && ok "$pkg" || warn "$pkg install failed (brew install $pkg)"; fi
