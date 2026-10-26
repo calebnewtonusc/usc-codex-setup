@@ -1,10 +1,15 @@
 # usc-codex-setup
 
-Turns Codex into something that helps you run your semester: it knows your classes,
-deadlines, goals and the people you're working with, tells you what to do today,
-and writes without sounding like AI. Made for USC students who've never coded.
-It works for anyone on a Mac.
+Every USC student can get Codex free through their USC ChatGPT account. This repo
+turns it into something that runs your semester with you: it knows your classes,
+deadlines, goals and people, tells you what to do today, walks you through any
+application, and writes without sounding like AI. Made for students who've never
+coded. Twenty minutes on a Mac.
 
+Step-by-step guide with every link, including the USC form for Codex access:
+https://docs.google.com/document/d/1bjF9hRJYw4un9agw6SMMl2lb5bJG0-NKBWcqnF5sfk8
+
+If it helps you, star the repo and send the guide to a friend.
 ## Before you start
 
 You need three things. The full walkthrough with every link is in the Google Doc
