@@ -1,0 +1,99 @@
+#!/bin/bash
+# agent-check: the checks a commit has to pass, runnable by hand or from a git hook.
+#
+#   agent-check            typecheck, then slop checks on what is staged
+#   agent-check --all      slop checks on every tracked .md file, not just staged
+#   agent-check --no-tsc   skip the typecheck
+#
+# Exit 1 when a check fails. Skip once with `git commit --no-verify`.
+# Prose files matching a .slopignore glob (walked up from the file) are skipped,
+# which is how quoted text like scripture stays out of the prose gate.
+
+set -uo pipefail
+
+ALL=0; TSC=1
+for a in "$@"; do
+  case "$a" in
+    --all) ALL=1 ;;
+    --no-tsc) TSC=0 ;;
+    -h|--help) sed -n 2,10p "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown flag: $a"; exit 2 ;;
+  esac
+done
+
+BIN="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "agent-check: not in a git repo"; exit 2; }
+cd "$ROOT" || exit 2
+FAIL=0
+
+# Prose over 19 scores "rewrite" in slop-check. Code-slop over 40 means at least two
+# real tells (a narration comment is 12, a bare TODO is 20). Both are guesses tuned on
+# one repo, never measured across many, so raise them per repo with these variables.
+PROSE_MAX="${SLOP_PROSE_MAX:-19}"
+CODE_MAX="${SLOP_CODE_MAX:-40}"
+
+if [ "$ALL" = 1 ]; then
+  FILES="$(git ls-files)"
+else
+  FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
+fi
+
+if [ "$TSC" = 1 ] && [ -f tsconfig.json ]; then
+  if [ -x node_modules/.bin/tsc ]; then
+    echo "agent-check: tsc --noEmit"
+    node_modules/.bin/tsc --noEmit || { echo "agent-check: typecheck failed"; FAIL=1; }
+  else
+    echo "agent-check: tsconfig.json but no node_modules/.bin/tsc, run npm install (typecheck skipped)"
+  fi
+fi
+
+PROSE=(); CODE=()
+while IFS= read -r f; do
+  [ -n "$f" ] && [ -f "$f" ] || continue
+  case "$f" in
+    node_modules/*|*/node_modules/*|*.lock|package-lock.json|pnpm-lock.yaml|*.min.*) continue ;;
+    *.md|*.mdx|*.txt) PROSE+=("$f") ;;
+    *.ts|*.tsx|*.js|*.jsx|*.mjs|*.cjs|*.py|*.sh|*.go|*.rs|*.swift) CODE+=("$f") ;;
+  esac
+done <<<"$FILES"
+
+if [ ${#PROSE[@]} -gt 0 ]; then
+  echo "agent-check: slop-check on ${#PROSE[@]} prose file(s)"
+  python3 "$BIN/slop-check" "${PROSE[@]}" --issues --max "$PROSE_MAX" || { echo "agent-check: prose reads as generated, fix the flagged lines"; FAIL=1; }
+fi
+
+if [ ${#CODE[@]} -gt 0 ]; then
+  echo "agent-check: code-slop on the change"
+  if git rev-parse --verify -q HEAD >/dev/null; then
+    python3 "$BIN/code-slop" --issues --max "$CODE_MAX" || { echo "agent-check: code-slop over $CODE_MAX"; FAIL=1; }
+  else
+    python3 "$BIN/code-slop" "${CODE[@]}" --issues --max "$CODE_MAX" || { echo "agent-check: code-slop over $CODE_MAX"; FAIL=1; }
+  fi
+  # Em dashes in code comments and UI strings ship to users. Quoted text that needs
+  # one goes in a file listed in .slopignore.
+  DASHED="$(python3 -I - "$ROOT" "${CODE[@]}" <<'PY'
+import fnmatch, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+ignore = []
+f = root / ".slopignore"
+if f.exists():
+    ignore = [l.strip() for l in f.read_text().splitlines() if l.strip() and not l.startswith("#")]
+for name in sys.argv[2:]:
+    if any(fnmatch.fnmatch(name, g) for g in ignore):
+        continue
+    try:
+        lines = (root / name).read_text(errors="ignore").splitlines()
+    except OSError:
+        continue
+    for i, line in enumerate(lines, 1):
+        if "\u2014" in line or "\u2013" in line:
+            print(f"{name}:{i}: {line.strip()[:90]}")
+PY
+)"
+  if [ -n "$DASHED" ]; then
+    echo "agent-check: em or en dash in code, use a colon, period or comma:"; echo "$DASHED"; FAIL=1
+  fi
+fi
+
+[ "$FAIL" = 0 ] && echo "agent-check: ok"
+exit "$FAIL"

@@ -1,0 +1,23 @@
+#!/bin/bash
+# agent-hook-init: add a pre-commit hook that runs agent-check to the repo you're in.
+#
+# A repo that already sets core.hooksPath (husky, or a checked-in .githooks/) is left
+# alone: add `agent-check` to that hook instead. An existing .git/hooks/pre-commit is
+# never overwritten.
+
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+if [ -n "$(git -C "$ROOT" config core.hooksPath || true)" ]; then
+  echo "core.hooksPath is $(git -C "$ROOT" config core.hooksPath): add 'agent-check' to the pre-commit hook there"
+  exit 0
+fi
+HOOK="$(git -C "$ROOT" rev-parse --git-path hooks)/pre-commit"
+case "$HOOK" in /*) ;; *) HOOK="$ROOT/$HOOK" ;; esac
+if [ -e "$HOOK" ]; then
+  grep -q agent-check "$HOOK" && echo "pre-commit already runs agent-check" || echo "$HOOK exists, add 'agent-check' to it by hand"
+  exit 0
+fi
+mkdir -p "$(dirname "$HOOK")"
+printf '#!/bin/sh\n# Added by agent-hook-init. Skip once with git commit --no-verify.\nexec agent-check\n' >"$HOOK"
+chmod +x "$HOOK"
+echo "pre-commit hook added: $HOOK"

@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""slop-check: score prose against the house writing rules, with no model.
+
+ai-scan wraps the avoid-ai-writing detector, which reads vocabulary: delve,
+testament to, ever-evolving. It scores clean on a paragraph that opens with a
+bolded fragment for drama, reveals its point after a colon, and stacks
+one-liners for rhythm. Those are structural tells, they are the ones the house
+rules actually ban, and they are what survives an editing pass that only looks
+for banned words.
+
+    slop-check draft.md              score one file
+    slop-check --stdin               score text on stdin
+    slop-check draft.md --issues     show what fired, with line numbers
+    slop-check draft.md --max 20     exit 1 above that score
+    slop-check draft.md --json       machine-readable
+
+Score is 0 to 100. Code blocks and inline code are stripped before scanning,
+so a banned word inside a snippet is not a finding.
+"""
+
+import argparse
+import json
+import re
+import sys
+
+# (id, weight, explanation, compiled pattern). Weight is how much one hit costs.
+# Anything absolute (an em dash, an emoji) is weighted to fail a file alone.
+RULES = [
+    # The en dash is in here too: a numeric range written with one reads as an
+    # em dash. Write a range as "19.5 to 42.4%".
+    ("em-dash", 40, "em or en dash: use a colon, period, comma, or the word 'to'", re.compile(r"[\u2014\u2013]")),
+    (
+        "emoji",
+        40,
+        "emoji",
+        re.compile(
+            "[\U0001f300-\U0001faff\U00002600-\U000027bf\U0001f1e6-\U0001f1ff]"
+        ),
+    ),
+    (
+        # A bolded lead-in with prose after it on the same line is a definition
+        # entry, which is how reference documents have always been written. The
+        # drama beat is the one that stands alone as its own paragraph. Firing
+        # on both pinned every reference file in the repo at "rewrite" for using
+        # ordinary formatting, and a checker that is always red gets ignored.
+        # Chat is stricter, and handled separately below, because the house rule
+        # there does ban bold lead-ins as scaffolding.
+        "bold-fragment-header",
+        8,
+        "bolded fragment standing alone as a drama beat: write it as a sentence",
+        re.compile(r"^\*\*[A-Z][^*\n]{0,70}[.!]\*\*\s*$", re.M),
+    ),
+
+    (
+        "binary-contrast",
+        12,
+        "binary contrast: state the second half only",
+        # "If a plan does not serve this, it is off-mission" is a conditional,
+        # not the "it's not X, it's Y" rhetoric the rule targets. The negative
+        # lookbehind for a leading If/When/Unless keeps ordinary logic out of it.
+        re.compile(
+            r"\b(?:it'?s not|is not|isn'?t|not)\s+[^,.\n]{3,45},\s+(?:it'?s|it is|but|rather)\b",
+            re.I,
+        ),
+    ),
+    (
+        # "Not a CRM. Not a Rolodex. Not a Notion doc." A list of what the thing is not, stacked for rhythm,
+        # reads as generated even when a human wrote it first. Two negations in
+        # a row is the shape; one "not" is ordinary English.
+        "negation-stack",
+        14,
+        "not this, not that: say what it is instead",
+        re.compile(
+            r"(?:^|(?<=[.!?:]\s))(?:not|no|never)\s+(?:a |an |the |just |another )?[^.,;:\n]{1,40}[.,;]\s+"
+            r"(?:and\s+)?(?:not|no|never)\s+(?:a |an |the |just |another )?[^.,;:\n]{1,40}",
+            re.I,
+        ),
+    ),
+    (
+        # "It was technical, but it was also democratic." "His folding can shape
+        # light, not just clothing." "Making people feel something, not just read
+        # it." Three of these sat in one graded paper, the file
+        # scored clean, and a teammate called it "the slop version" on sight.
+        # binary-contrast only caught the "it's not X, it's Y" spelling.
+        "not-just-contrast",
+        12,
+        "X, not just Y / but it was also: state the claim you mean",
+        re.compile(
+            r"(?:,\s+not (?:just|only|merely)\b|\bnot only\b[^.\n]{3,60}\bbut\b"
+            r"|,\s+but (?:it|they|he|she|this|that) (?:was|were|is|are) also\b)",
+            re.I,
+        ),
+    ),
+    (
+        "throat-clearing",
+        12,
+        "throat-clearing: open on the point",
+        re.compile(
+            r"\b(?:here'?s the thing|let me be clear|to be honest|the truth is|look,)",
+            re.I,
+        ),
+    ),
+    (
+        "faux-insight",
+        14,
+        "faux-insight setup: make the claim stand alone",
+        re.compile(
+            r"\b(?:what nobody tells you|the part everyone misses|most people get this wrong"
+            r"|here'?s what (?:most|nobody))",
+            re.I,
+        ),
+    ),
+    (
+        "recap-ending",
+        12,
+        "summary-recap opener: they just read it",
+        re.compile(r"^(?:In conclusion|Ultimately|Overall|In summary|All in all)\b", re.M),
+    ),
+    (
+        "metadiscourse",
+        8,
+        "metadiscourse: if it is clear, delete the aside",
+        re.compile(
+            r"\b(?:it'?s worth noting|the key point is|as you can see"
+            r"|that matters more than it sounds|importantly,)",
+            re.I,
+        ),
+    ),
+    (
+        "weasel-attribution",
+        10,
+        "weasel attribution: name the source or drop the claim",
+        re.compile(r"\b(?:experts agree|studies show|research shows|it is widely)", re.I),
+    ),
+    (
+        "importance-puffery",
+        10,
+        "puffery: state the fact and let them judge",
+        re.compile(
+            r"\b(?:a testament to|marks a pivotal|underscores the|highlights the importance)",
+            re.I,
+        ),
+    ),
+    (
+        "banned-word",
+        8,
+        "banned word",
+        re.compile(
+            # "harness" and "realm" are banned as marketing verbs and filler, not
+            # as the ordinary nouns. An agent harness is a real thing with that
+            # name, and flagging it trains people to ignore the scanner.
+            r"\b(?:delve|foster|leverage|utilize|facilitate|empower|streamline|robust"
+            r"|seamless|cutting-edge|game changer|paradigm shift|transformative|elevate"
+            r"|harness(?:es|ing)?\s+the\b|meticulous|intricate|tapestry|ever-evolving"
+            r"|realm\s+of)\b",
+            re.I,
+        ),
+    ),
+    (
+        "empty-phrase",
+        6,
+        "empty phrase",
+        re.compile(
+            r"\b(?:at the end of the day|when it comes to|in today'?s world"
+            r"|let'?s dive in|needless to say)\b",
+            re.I,
+        ),
+    ),
+    (
+        "trailing-ing-clause",
+        6,
+        "superficial -ing clause tacked onto a sentence",
+        re.compile(r",\s+(?:highlight|showcas|underscor|demonstrat|reflect|emphasiz)ing\b", re.I),
+    ),
+]
+
+
+def strip_code(text):
+    """Blank out code so a snippet's contents never count as prose.
+
+    Replaced with newlines rather than deleted, so reported line numbers still
+    point at the right line of the original file.
+    """
+
+    def blank(m):
+        return "\n" * m.group(0).count("\n")
+
+    text = re.sub(r"```.*?```", blank, text, flags=re.S)
+    text = re.sub(r"^ {4,}\S.*$", "", text, flags=re.M)
+    text = re.sub(r"`[^`\n]*`", "", text)
+    # Blockquotes are somebody else's sentence. Scoring them means telling the
+    # user their own quoted thesis is slop, and the only way to "fix" the
+    # finding is to misquote the person. A compiled corpus is mostly quotes, so
+    # without this the files that most need to stay verbatim score the worst.
+    text = re.sub(r"^\s*>.*$", "", text, flags=re.M)
+    # The README footer is a deliberate, documented exception to the emoji ban.
+    # Flagging it means the checker fails every personal repo on the one line it
+    # is supposed to have, which teaches people to ignore the checker.
+    text = re.sub(r"^.*All glory to God!.*$", "", text, flags=re.M)
+    return text
+
+
+def stacked_fragments(text):
+    """Three or more consecutive one-line paragraphs used for rhythm."""
+    paras = [p.strip() for p in re.split(r"\n\s*\n", text)]
+    hits, run = [], 0
+    for p in paras:
+        short = p and "\n" not in p and len(p) < 90 and not p.startswith(("|", "-", "#", ">"))
+        run = run + 1 if short else 0
+        if run == 3:
+            hits.append(p[:60])
+    return hits
+
+
+# Words that turn "X, Y" into an ordinary sentence or list rather than a
+# spliced caption.
+COMMA_JOINERS = {
+    "and", "but", "or", "so", "because", "which", "who", "when", "where", "while",
+    "if", "then", "though", "although", "unless", "since", "until", "yes", "no",
+    "please", "thanks", "hi", "hey", "ok", "okay", "well", "also", "however",
+    "e.g.", "i.e.", "etc",
+}
+# Chat is where a person reads it, so it costs more there. In reference docs a
+# terse "Three numbers, one concept." is still a tell but the repo gate should
+# warn, not fail, on a style finding in a 400-line manual.
+COMMA_WEIGHT_CHAT = 10
+COMMA_WEIGHT_FILE = 4
+FINITE_VERBS = {
+    "is", "are", "was", "were", "be", "been", "am", "has", "have", "had", "do",
+    "does", "did", "can", "could", "will", "would", "shall", "should", "may",
+    "might", "must", "go", "goes", "get", "gets", "make", "makes", "run", "runs",
+    "use", "uses", "see", "sees", "need", "needs", "want", "wants", "know",
+    "knows", "think", "thinks", "say", "says", "said", "take", "takes", "give",
+    "gives", "keep", "keeps", "let", "lets", "put", "puts", "find", "finds",
+    "work", "works", "look", "looks", "feel", "feels", "come", "comes", "read",
+    "reads", "write", "writes", "show", "shows", "try", "tries", "add", "adds",
+    "fix", "fixes", "build", "builds", "ship", "ships", "open", "opens",
+}
+
+
+def sentences(prose):
+    """Whole sentences with the line they start on.
+
+    Markdown wraps a sentence across lines, so a per-line regex sees the tail of
+    one sentence glued to the head of the next. The first version of the comma
+    check did exactly that and fired 426 times on this repo's docs, mostly on
+    fragments that were never sentences. Paragraphs are joined first; list
+    items, headings, tables, quotes and code are left out.
+    """
+    out, buf, start = [], [], 0
+    for i, line in enumerate(prose.split("\n"), 1):
+        bare = line.strip()
+        if not bare or bare.startswith(("-", "*", "#", "|", ">", "+")) or re.match(r"^\d+[.)]\s", bare):
+            if buf:
+                out.append((start, " ".join(buf)))
+            buf = []
+            continue
+        if not buf:
+            start = i
+        buf.append(bare)
+    if buf:
+        out.append((start, " ".join(buf)))
+    for line_no, para in out:
+        for sent in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])", para):
+            if sent.strip():
+                yield line_no, sent.strip()
+
+
+def scan(text, chat=False, essay=False):
+    """Score, with diminishing returns per rule.
+
+    A reference doc that opens ten paragraphs with a bolded lead-in has one
+    habit, not ten problems. Charging full weight for every repeat pinned every
+    long document at 100 and made the score useless for ranking. Distinct rules
+    firing is the real signal, so repeats of one rule are worth steadily less.
+    """
+    prose = strip_code(text)
+    findings, per_rule = [], {}
+    for rid, weight, why, pattern in RULES:
+        # Chat replies may use emojis the way the user does. The ban still
+        # holds for files: copy, code, commits, docs.
+        if chat and rid == "emoji":
+            continue
+        # Most reference docs say "not just", so on plain files
+        # this rule is noise. It is scored where it reads as generated: replies
+        # and graded papers.
+        if rid == "not-just-contrast" and not (chat or essay):
+            continue
+        for m in pattern.finditer(prose):
+            if rid == "binary-contrast":
+                # Look back to the start of the sentence. A conditional ("If a
+                # plan does not serve this, it is off-mission") is ordinary
+                # logic, not the "it's not X, it's Y" move the rule is after.
+                head = prose[max(0, m.start() - 200) : m.start()]
+                clause = re.split(r"(?<=[.!?])\s+|\n", head)[-1].lstrip("*_>#- ")
+                if re.match(r"(?:If|When|Unless|Whether)\b", clause, re.I):
+                    continue
+            line = prose[: m.start()].count("\n") + 1
+            findings.append(
+                {"rule": rid, "line": line, "why": why, "text": m.group(0)[:70].strip()}
+            )
+            per_rule.setdefault(rid, [weight, 0])[1] += 1
+    for frag in stacked_fragments(prose):
+        findings.append(
+            {
+                "rule": "stacked-fragments",
+                "line": 0,
+                "why": "stacked one-line paragraphs for rhythm",
+                "text": frag,
+            }
+        )
+        per_rule.setdefault("stacked-fragments", [10, 0])[1] += 1
+
+    # Phrase, comma, phrase. "Dad, Dr. Reyes." "big sur '23, all 5 of us."
+    # "Small moments, big impact." Two verbless fragments spliced on a comma
+    # are a caption pretending to be a sentence, and readers flag the shape
+    # as generated.
+    # A finite verb anywhere in it makes it a real sentence, so it is skipped.
+    for line_no, sent in sentences(prose):
+        # A label ("In the hud group, after the line:"), a citation ("Wang et
+        # al., 2024.") or a link is reference apparatus, not a caption.
+        if sent.count(",") != 1 or sent.rstrip().endswith(":") or "et al" in sent or "[" in sent:
+            continue
+        left, right = (part.strip(" .!?\"'") for part in sent.split(","))
+        lw, rw = left.split(), right.split()
+        if not (1 <= len(lw) <= 5 and 1 <= len(rw) <= 5):
+            continue
+        if rw[0].lower() in COMMA_JOINERS or lw[0].lower() in COMMA_JOINERS:
+            continue
+        words = [w.lower().strip("'\"()*_") for w in lw + rw]
+        if any(w in FINITE_VERBS or re.search(r"(?:ed|'s|'re|'ve|'ll|'d|n't)$", w) for w in words):
+            continue
+        findings.append({
+            "rule": "comma-splice-fragment",
+            "line": line_no,
+            "why": "phrase, comma, phrase: write a sentence with a verb",
+            "text": sent[:70],
+        })
+        per_rule.setdefault("comma-splice-fragment", [COMMA_WEIGHT_CHAT if chat else COMMA_WEIGHT_FILE, 0])[1] += 1
+
+    if not chat:
+        # Two density tells from a graded paper, measured
+        # against a teammate's hand-written section of the same paper. Mine: 10 uses
+        # of "both" in 1,285 words and 23 quoted fragments; his: 1 "both" in 948
+        # words and 4 quotes. Comparing two people by stacking "both of them..."
+        # sentences, and quilting short phrases lifted from museum and press
+        # copy, is what read as generated. Thresholds sit between the two.
+        words = max(1, len(re.findall(r"[A-Za-z']+", prose)))
+        # Essays only, by flag: memory notes and skills quote people on purpose,
+        # and run on everything these two hit 38 of 518 repo docs (14 even with a
+        # citation-count gate). Graded writing runs `slop-check --essay`.
+        if essay and words >= 400:
+            both = len(re.findall(r"\bboth\b", prose, re.I))
+            if both >= 4 and both * 1000 / words >= 5:
+                findings.append({"rule": "both-symmetry", "line": 0,
+                    "why": f"'both' {both}x in {words} words: compare with one specific, not paired sentences",
+                    "text": f"{both} x both"})
+                per_rule.setdefault("both-symmetry", [10, 0])[1] += 1
+            short_quotes = [q for q in re.findall(r"[\"\u201c]([^\"\u201d\n]{2,60})[\"\u201d]", prose)
+                            if len(q.split()) <= 8]
+            if len(short_quotes) >= 8 and len(short_quotes) * 1000 / words >= 8:
+                findings.append({"rule": "quote-confetti", "line": 0,
+                    "why": f"{len(short_quotes)} short quoted fragments: quote one source and say what it means",
+                    "text": "; ".join(short_quotes[:3])[:70]})
+                per_rule.setdefault("quote-confetti", [10, 0])[1] += 1
+
+    if chat:
+        # Scaffolding a reply with a bolded lead-in on every paragraph is the
+        # assistant-brain tell the house rules name, so chat counts them all,
+        # not just the standalone ones.
+        # A colon reveal is slop in a sentence ("The best part: it learns") and
+        # is a field label in a document ("Business model: hardware plus
+        # subscription"). The pattern cannot tell them apart, and reference
+        # files are mostly labels, so this is scored in conversation only.
+        for m in re.finditer(r"^[A-Z][A-Za-z ]{2,28}: [a-z]", prose, re.M):
+            findings.append({
+                "rule": "colon-reveal",
+                "line": prose[: m.start()].count("\n") + 1,
+                "why": "colon reveal: state it as a sentence",
+                "text": m.group(0)[:70].strip(),
+            })
+            per_rule.setdefault("colon-reveal", [10, 0])[1] += 1
+        for m in re.finditer(r"^\*\*[A-Z][^*\n]{0,70}[.!]\*\*\s+\S", prose, re.M):
+            findings.append({
+                "rule": "bold-lead-in",
+                "line": prose[: m.start()].count("\n") + 1,
+                "why": "bolded lead-in used as scaffolding: this is a conversation",
+                "text": m.group(0)[:70].strip(),
+            })
+            per_rule.setdefault("bold-lead-in", [8, 0])[1] += 1
+        score = sum(w * c for w, c in per_rule.values())
+        return min(int(score), 100), findings
+
+    score = 0
+    for weight, count in per_rule.values():
+        # Full weight for the first, half for the second, a third for the third,
+        # and nothing past that.
+        score += weight * sum(1 / n for n in range(1, min(count, 3) + 1))
+    return min(int(round(score)), 100), findings
+
+
+CODE_SUFFIXES = {
+    ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".rb", ".go", ".rs",
+    ".java", ".c", ".h", ".cc", ".cpp", ".hpp", ".swift", ".kt", ".php", ".pl",
+    ".sh", ".bash", ".zsh", ".fish", ".sql", ".css", ".scss", ".html", ".xml",
+    ".json", ".yml", ".yaml", ".toml", ".ini", ".lock",
+}
+
+
+def load_ignores(start):
+    """Read .slopignore, walking up from the file toward the repo root.
+
+    Verbatim material must not be scored. A source corpus, someone else's
+    teaching, or the user's own draft essay will always trip a style detector,
+    and the only two ways that ends are a permanently red report nobody reads
+    or an edit that corrupts a quote. Both are worse than an exemption.
+
+    Format is one glob per line, `#` comments, matched against the path
+    relative to the directory holding the .slopignore.
+    """
+    pats, root = [], start if start.is_dir() else start.parent
+    seen = set()
+    for d in [root, *root.parents]:
+        if d in seen or not d.exists():
+            break
+        seen.add(d)
+        f = d / ".slopignore"
+        if f.is_file():
+            for line in f.read_text(errors="replace").split("\n"):
+                # Strip trailing comments too. A pattern with an explanation
+                # glued to it matches nothing and fails silently, which is the
+                # exact failure mode this whole kit exists to refuse.
+                line = line.split("#")[0].strip()
+                if line:
+                    pats.append((d, line))
+        if (d / ".git").exists():
+            break
+    return pats
+
+
+def is_ignored(path, pats):
+    import fnmatch
+    rp = path.resolve()
+    for base, pat in pats:
+        try:
+            rel = rp.relative_to(base.resolve()).as_posix()
+        except ValueError:
+            continue
+        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, pat.rstrip("/") + "/*"):
+            return True
+        if any(fnmatch.fnmatch(part, pat.rstrip("/")) for part in rel.split("/")[:-1]):
+            return True
+    return False
+
+
+def is_verbatim(text):
+    """Frontmatter opt-out, for a single file with no useful directory."""
+    head = text[:400]
+    return bool(re.search(r"^\s*verbatim:\s*true\s*$", head, re.M))
+
+
+def is_code(path, text):
+    """True when this is source, not prose.
+
+    Extension first, then a shebang, then a density test for extensionless
+    files like `bin/people`. The density test looks for lines ending in a
+    brace or semicolon, which is rare in English and constant in code.
+    """
+    if path.suffix.lower() in CODE_SUFFIXES:
+        return True
+    head = text[:200].lstrip()
+    if head.startswith("#!"):
+        return True
+    lines = [ln.rstrip() for ln in text.split("\n") if ln.strip()]
+    if len(lines) < 20:
+        return False
+    codey = sum(1 for ln in lines if ln.endswith((";", "{", "}", ");", "):", "*/")))
+    return codey / len(lines) > 0.15
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="slop-check")
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--stdin", action="store_true")
+    ap.add_argument("--issues", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--max", type=int)
+    ap.add_argument(
+        "--essay",
+        action="store_true",
+        help="score a paper or graded essay: adds the density tells (paired 'both' "
+        "comparisons, confetti of short quotes) that read as generated in prose",
+    )
+    ap.add_argument(
+        "--chat",
+        action="store_true",
+        help="score a chat reply: no diminishing returns, since a reply is short "
+        "and one drama beat in four paragraphs is the whole problem",
+    )
+    a = ap.parse_args()
+
+    targets = []
+    if a.stdin or not a.files:
+        targets.append(("<stdin>", sys.stdin.read()))
+
+    # A directory means every markdown file under it, worst first. ai-scan has
+    # always taken directories and this did not, which made it the awkward one
+    # to reach for and impossible to use as a CI gate.
+    import pathlib
+
+    paths = []
+    for f in a.files:
+        pth = pathlib.Path(f)
+        if pth.is_dir():
+            paths.extend(sorted(q for q in pth.rglob("*.md") if q.is_file()))
+        else:
+            paths.append(pth)
+    for pth in paths:
+        try:
+            text = pth.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            print(f"slop-check: {e}", file=sys.stderr)
+            return 2
+        # A source file scored as prose is noise, not a finding. `if (x) {` on
+        # its own line reads as a one-line paragraph to a rhythm detector, so a
+        # clean program can score worse than genuinely bad writing. Naming the
+        # file explicitly should not defeat that: say why it was skipped, so it
+        # does not look like the file passed.
+        if is_code(pth, text):
+            print(f"  --  {pth}  skipped (source code, not prose)")
+            continue
+        if is_ignored(pth, load_ignores(pth)) or is_verbatim(text):
+            if not a.json:
+                print(f"  --  {pth}  skipped (verbatim, not ours to edit)")
+            continue
+        targets.append((str(pth), text))
+    if not targets:
+        return 0
+
+    worst, out = 0, []
+    for name, text in targets:
+        score, findings = scan(text, chat=a.chat, essay=a.essay)
+        worst = max(worst, score)
+        out.append({"file": name, "score": score, "findings": findings})
+
+    if a.json:
+        print(json.dumps(out, indent=2))
+    else:
+        for r in sorted(out, key=lambda x: -x["score"]):
+            label = "clean" if r["score"] == 0 else "rewrite" if r["score"] >= 20 else "minor"
+            print(f"{r['score']:>3}  {r['file']}  {label}  ({len(r['findings'])} flagged)")
+            if a.issues:
+                for f in r["findings"]:
+                    where = f"L{f['line']}" if f["line"] else "  "
+                    print(f"     {where:>5}  {f['rule']}: {f['why']}")
+                    print(f"            > {f['text']}")
+
+    if a.max is not None and worst > a.max:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
