@@ -75,4 +75,19 @@ bad = [str(p) for p in pathlib.Path(sys.argv[1]).rglob("*")
 print("\n".join(bad))
 sys.exit(1 if bad else 0)
 PY
+# 7. Docs match what ships. skills/life-ops was committed as a symlink to the author's
+# laptop, so on every other Mac it was a dead link and the skill never installed; and
+# a guide that starts with `gh repo clone` fails before anyone has signed in to GitHub.
+if find "$HERE" -path "$HERE/.git" -prune -o -type l -print | grep .; then fail "symlink in the repo (dead on anyone else's Mac)"; fi
+LINE='curl -fsSL https://codeload.github.com/calebnewtonusc/usc-codex-setup/tar.gz/HEAD'
+grep -qF "$LINE" "$HERE/README.md" || fail "README lost the one-line setup"
+grep -qF "$LINE" "$HERE/SETUP-FOR-CODEX.md" || fail "SETUP-FOR-CODEX.md downloads the repo a different way than the README"
+if grep -n 'gh repo clone' "$HERE/README.md" "$HERE/SETUP-FOR-CODEX.md"; then fail "docs clone with gh before GitHub sign-in"; fi
+grep -q 'not a regular' "$HERE/README.md" || fail "README lost the which-app step"
+for f in $(sed -n '/^Usage:/,/^Environment:/p' "$HERE/install.sh" | grep -oE -- '--[a-z-]+'); do
+  grep -qF -- "$f" "$HERE/README.md" || fail "README doesn't mention $f"
+done
+for s in life-ops grilling deep-research reflect no-ai-slop avoid-ai-writing humanizer debugging reviewing-changes shipping interface repo-health stack-rules pdf docx xlsx pptx diagram first-reader thinking-out-loud; do
+  [ -f "$HERE/skills/$s/SKILL.md" ] || grep -q -- "$s" "$HERE/install.sh" || fail "README lists skill $s that nothing installs"
+done
 echo "smoke ok"

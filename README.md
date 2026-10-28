@@ -10,33 +10,69 @@ Step-by-step guide with every link, including the USC form for Codex access:
 https://docs.google.com/document/d/1bjF9hRJYw4un9agw6SMMl2lb5bJG0-NKBWcqnF5sfk8
 
 If it helps you, star the repo and send the guide to a friend.
-## Before you start
 
-You need three things. The full walkthrough with every link is in the Google Doc
-that came with this repo.
+## Start here: where you type
 
-- A GitHub account (free): https://github.com/signup. GitHub saves your setup and
-  anything you build, with every version kept.
-- Codex access through your USC ChatGPT account. Request it with the USC ITS form:
-  https://itsusc.service-now.com/usc_its_support?id=sc_cat_item&sys_id=3815a5fd879c87505edaa7583cbb354d
-- Homebrew, Codex and GitHub's tool. Paste these into Terminal one at a time:
+Two places, and only two.
+
+- **Terminal, once, for the setup line below.** Codex isn't set up on your Mac
+  yet, so this one step can't happen inside it. Open Terminal with Command and
+  Space, type `Terminal`, press Enter.
+- **Codex in the ChatGPT app, for everything after.** Download the ChatGPT app
+  for Mac (https://learn.chatgpt.com/docs/app) and sign in with your USC account.
+  Use Codex there, not a regular ChatGPT chat. A regular chat can't see the files
+  on your Mac, so it'll tell you to connect GitHub or upload files. You don't need
+  either.
+
+Paste this one line into Terminal and press Enter. It downloads this repo and runs
+the whole setup, no Homebrew or GitHub sign-in needed first:
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install node gh
-gh auth login
+mkdir -p ~/usc-codex-setup && curl -fsSL https://codeload.github.com/calebnewtonusc/usc-codex-setup/tar.gz/HEAD | tar xz -C ~/usc-codex-setup --strip-components 1 && bash ~/usc-codex-setup/install.sh
 ```
 
-And download the ChatGPT app for Mac (https://learn.chatgpt.com/docs/app), signed in with your USC account. That's where you use Codex. Terminal is only for setup.
+It stops for you in three places. Each one can open a window behind Terminal, so
+if nothing seems to happen, press Command-Tab and look:
+
+- **Apple's Command Line Tools** (only on a Mac that's never had them). A window
+  asks to install them. Click Install, wait for it to finish, then paste the same
+  line again.
+- **GitHub sign-in.** It shows a code like `ABCD-1234`. Copy it, press Enter, and
+  your web browser opens to GitHub. If it asks you to sign in first, do that,
+  and the page for the code comes next. Paste the code, click Authorize, then
+  come back to Terminal.
+- **Codex's hook check**, possibly, the first time you open Codex after setup.
+  If it asks whether to trust a new hook from usc-codex-setup, say yes. That's
+  the check that flags AI-sounding writing.
+
+Then quit and reopen the ChatGPT app, go to Codex, open the `life` folder in your
+home folder, and say "set me up". If the setup line stopped partway or printed
+anything under "Problems", paste the prompt in [SETUP-FOR-CODEX.md](SETUP-FOR-CODEX.md)
+into Codex and it finishes the job.
+
+**If you're one of the first people through:** when you're done, tell Codex
+"write a PDF to my Downloads folder listing every snag I hit setting this up, in
+order, with what fixed each one" and send that PDF to Caleb.
+
+## Before you start
+
+- A GitHub account (free): https://github.com/signup. GitHub saves your setup and
+  anything you build, with every version kept. Make it before you paste the
+  setup line, so the sign-in step has an account to sign in to.
+- Codex access through your USC ChatGPT account. Request it with the USC ITS form:
+  https://itsusc.service-now.com/usc_its_support?id=sc_cat_item&sys_id=3815a5fd879c87505edaa7583cbb354d
+- The ChatGPT app for Mac, signed in with your USC account (link above).
+
+You don't need Homebrew. If you already have it, the installer uses it; if not,
+it puts every tool in `~/.local` with no password.
 
 ## Install
 
-```bash
-gh repo clone calebnewtonusc/usc-codex-setup ~/usc-codex-setup && ~/usc-codex-setup/install.sh
-```
+The setup line under "Start here" is the whole install. It's the same as:
 
-Then quit and reopen the ChatGPT app, go to Codex, and open the `life` folder in your home folder. Say "set me up". It interviews you one question at a time and fills in your files.
-After that, open that folder and ask "what should I do today."
+```bash
+bash ~/usc-codex-setup/install.sh
+```
 
 Running the installer twice adds nothing the second time, and it never overwrites a
 file you already have. `./install.sh --dry-run` shows what it would do first.

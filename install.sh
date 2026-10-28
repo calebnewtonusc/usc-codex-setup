@@ -86,7 +86,17 @@ for a in json.load(sys.stdin)["assets"]:
 if [ "$DO_PREREQS" = 1 ]; then
   bold "1. Prerequisites"
   run mkdir -p "$LOCAL_BIN"
-  if command -v git >/dev/null 2>&1; then have "git"; else warn "BLOCKED: git missing, run: sudo apt install -y git"; fi
+  # On a fresh Mac, /usr/bin/git is a stub until Apple's Command Line Tools are in, and
+  # the first git call pops a window. Ask for them up front, with a warning first.
+  if [ "$OS" = Darwin ] && ! xcode-select -p >/dev/null 2>&1; then
+    if [ "$DRY_RUN" = 1 ]; then run "xcode-select --install"
+    else
+      echo "  Heads up: a window is opening that asks to install Apple's Command Line Tools."
+      echo "  It can land behind this one. Click Install, wait for it to finish, then paste the setup line again."
+      xcode-select --install >/dev/null 2>&1
+      todo "Command Line Tools: click Install in the window Apple opened, wait for it, then paste the setup line again"
+    fi
+  elif command -v git >/dev/null 2>&1; then have "git"; else warn "BLOCKED: git missing, run: sudo apt install -y git"; fi
   nodearch=x64 gharch=amd64 rgtriple=x86_64-unknown-linux-musl jqarch=amd64 nodeos=linux ghos=linux jqos=linux
   case "$ARCH" in aarch64|arm64) nodearch=arm64 gharch=arm64 rgtriple=aarch64-unknown-linux-gnu jqarch=arm64 ;; esac
   [ "$OS" = Darwin ] && { nodeos=darwin ghos=macOS jqos=macos; rgtriple="${ARCH/arm64/aarch64}-apple-darwin"; }
@@ -146,11 +156,13 @@ if [ "$DO_PREREQS" = 1 ]; then
   done
   if gh auth status >/dev/null 2>&1; then have "gh signed in"
   elif [ "$DRY_RUN" = 0 ] && [ -t 0 ] && command -v gh >/dev/null 2>&1; then
-    echo "  GitHub sign-in: copy the code below, then press Enter to open the browser"
+    echo "  Heads up: GitHub sign-in happens in your web browser, and that window can open behind this one."
+    echo "  Copy the code it shows (like ABCD-1234), press Enter, then switch to the browser with Command-Tab."
+    echo "  Sign in to github.com there if it asks, paste the code, click Authorize, and come back here."
     gh auth login --web -h github.com -p https && ok "gh signed in" || warn "gh sign-in didn't finish: gh auth login --web"
   else todo "GitHub: gh auth login --web"; fi
   if [ "$DRY_RUN" = 0 ] && command -v codex >/dev/null 2>&1 && [ ! -f "$CODEX_DIR/auth.json" ]; then
-    todo "Codex: run codex once and sign in with ChatGPT (or set OPENAI_API_KEY)"
+    todo "Only if you want Codex in Terminal too: run codex once and sign in with ChatGPT. The ChatGPT app signs in on its own"
   fi
 fi
 
@@ -295,5 +307,6 @@ echo "  installed: ${#INSTALLED[@]}   already had: ${#SKIPPED[@]}   problems: ${
 if [ ${#PROBLEMS[@]} -gt 0 ]; then bold "Problems"; for p in "${PROBLEMS[@]}"; do echo "  - $p"; done; fi
 if [ ${#NEEDS[@]} -gt 0 ]; then bold "Still needs you"; for n in "${NEEDS[@]}"; do echo "  - $n"; done; fi
 echo
-echo "Quit and reopen the ChatGPT app, go to Codex, open the life folder in your home folder,"
-echo "and say: set me up"
+echo "Quit and reopen the ChatGPT app, go to Codex (not a regular chat), open the life folder in"
+echo "your home folder, and say: set me up"
+echo "If anything here confused you or broke, paste the prompt from SETUP-FOR-CODEX.md into Codex."
